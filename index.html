@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Speed Reader</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header>
+  <span class="icon">⚡</span>
+  <h1>Speed Reader</h1>
+</header>
+
+<main>
+
+  <!-- Drop zone -->
+  <div id="drop-zone" role="button" tabindex="0" aria-label="Upload file">
+    <span class="drop-icon">📄</span>
+    <p>Drop a file here, or click to choose</p>
+    <p class="hint">Supported: PDF, PPTX, TXT</p>
+    <input type="file" id="file-input" accept=".pdf,application/pdf,.pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation,.txt,text/plain" />
+  </div>
+
+  <!-- Loading indicator -->
+  <div id="loading" aria-live="polite">
+    <div class="spinner"></div>
+    <span>Extracting text…</span>
+  </div>
+
+  <!-- File info -->
+  <div id="file-info" role="status">
+    <span class="file-icon">📎</span>
+    <span id="file-name"></span>
+    <span id="word-count"></span>
+  </div>
+
+  <!-- Reader display -->
+  <div id="reader" aria-live="off">
+    <span id="reader-placeholder">Upload a file to begin</span>
+    <div id="word-display" aria-label="current word" style="display:none;">
+      <span id="word-prefix"></span><span id="word-orp"></span><span id="word-suffix"></span>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div id="controls">
+    <button id="btn-slower" title="Decrease speed (−10 WPM)">◀ −10</button>
+    <button id="btn-play" disabled>▶ Start</button>
+    <button id="btn-faster" title="Increase speed (+10 WPM)">+10 ▶</button>
+    <span id="wpm-display">300 WPM</span>
+  </div>
+
+  <!-- Progress -->
+  <div id="progress-section">
+    <div id="progress-bar-track">
+      <div id="progress-bar-fill"></div>
+    </div>
+    <div id="progress-label">— / —</div>
+  </div>
+
+  <div id="kb-hint"><kbd>Space</kbd> to play / pause</div>
+
+</main>
+
+<!-- PDF.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- JSZip (for .pptx) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ── State ────────────────────────────────────────────────────────────────
+  let words        = [];
+  let currentIndex = 0;
+  let wpm          = 300;
+  let intervalId   = null;
+  const MIN_WPM    = 60;
+  const MAX_WPM    = 1000;
+
+  // ── DOM refs ─────────────────────────────────────────────────────────────
+  const dropZone      = document.getElementById('drop-zone');
+  const fileInput     = document.getElementById('file-input');
+  const loading       = document.getElementById('loading');
+  const fileInfo      = document.getElementById('file-info');
+  const fileNameEl    = document.getElementById('file-name');
+  const wordCountEl   = document.getElementById('word-count');
+  const reader        = document.getElementById('reader');
+  const placeholder   = document.getElementById('reader-placeholder');
+  const wordDisplay   = document.getElementById('word-display');
+  const wordPrefix    = document.getElementById('word-prefix');
+  const wordOrp       = document.getElementById('word-orp');
+  const wordSuffix    = document.getElementById('word-suffix');
+  const btnPlay       = document.getElementById('btn-play');
+  const btnSlower     = document.getElementById('btn-slower');
+  const btnFaster     = document.getElementById('btn-faster');
+  const wpmDisplay    = document.getElementById('wpm-display');
+  const progressFill  = document.getElementById('progress-bar-fill');
+  const progressLabel = document.getElementById('progress-label');
+
+  // ── PDF.js setup ─────────────────────────────────────────────────────────
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  // ── ORP calculation ───────────────────────────────────────────────────────
+  // Pivot = ceil(length / 2) - 1 (0-based index)
+  function orpIndex(word) {
+    return Math.ceil(word.length / 2) - 1;
+  }
+
+  function renderWord(word) {
+    if (!word) return;
+    const pivot = orpIndex(word);
+    wordPrefix.textContent = word.slice(0, pivot);
+    wordOrp.textContent    = word[pivot];
+    wordSuffix.textContent = word.slice(pivot + 1);
+  }
+
+  // ── RSVP loop ─────────────────────────────────────────────────────────────
+  function tick() {
+    if (currentIndex >= words.length) {
+      stop();
+      return;
+    }
+    renderWord(words[currentIndex]);
+    updateProgress();
+    currentIndex++;
+  }
+
+  function start() {
+    if (!words.length) return;
+    if (currentIndex >= words.length) {
+      // Restart from beginning if we're at the end
+      currentIndex = 0;
+    }
+    intervalId = setInterval(tick, 60000 / wpm);
+    btnPlay.textContent = '⏸ Pause';
+    btnPlay.classList.add('playing');
+  }
+
+  function stop() {
+    clearInterval(intervalId);
+    intervalId = null;
+    btnPlay.textContent = '▶ Resume';
+    btnPlay.classList.remove('playing');
+    // If we hit the end, show "Start over" label
+    if (currentIndex >= words.length) {
+      btnPlay.textContent = '↺ Restart';
+    }
+  }
+
+  function togglePlay() {
+    if (intervalId) {
+      stop();
+    } else {
+      start();
+    }
+  }
+
+  // ── Progress ──────────────────────────────────────────────────────────────
+  function updateProgress() {
+    if (!words.length) return;
+    const pct = (currentIndex / words.length) * 100;
+    progressFill.style.width = pct + '%';
+    progressLabel.textContent =
+      `${currentIndex.toLocaleString()} / ${words.length.toLocaleString()}`;
+  }
+
+  function resetProgress() {
+    progressFill.style.width = '0%';
+    progressLabel.textContent = '0 / ' + words.length.toLocaleString();
+  }
+
+  // ── WPM controls ─────────────────────────────────────────────────────────
+  function setWpm(newWpm) {
+    wpm = Math.min(MAX_WPM, Math.max(MIN_WPM, newWpm));
+    wpmDisplay.textContent = wpm + ' WPM';
+    // If currently playing, restart the interval at the new speed
+    if (intervalId) {
+      clearInterval(intervalId);
+      intervalId = setInterval(tick, 60000 / wpm);
+    }
+  }
+
+  btnSlower.addEventListener('click', () => setWpm(wpm - 10));
+  btnFaster.addEventListener('click', () => setWpm(wpm + 10));
+
+  // ── Play button ───────────────────────────────────────────────────────────
+  btnPlay.addEventListener('click', togglePlay);
+
+  // ── Space bar shortcut ────────────────────────────────────────────────────
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' && e.target === document.body) {
+      e.preventDefault();
+      if (words.length) togglePlay();
+    }
+  });
+
+  // ── Text tokeniser (shared) ───────────────────────────────────────────────
+  function tokenise(text) {
+    return text.split(/\s+/).filter(w => w.length > 0);
+  }
+
+  // ── PDF extraction ────────────────────────────────────────────────────────
+  async function extractFromPdf(arrayBuffer) {
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const parts = [];
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page    = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      parts.push(content.items.map(item => item.str).join(' '));
+    }
+    return tokenise(parts.join(' '));
+  }
+
+  // ── PPTX extraction ───────────────────────────────────────────────────────
+  async function extractFromPptx(arrayBuffer) {
+    const zip = await JSZip.loadAsync(arrayBuffer);
+    // Slide files live at ppt/slides/slide1.xml, slide2.xml, …
+    const slideFiles = Object.keys(zip.files)
+      .filter(name => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+      .sort((a, b) => {
+        const n = s => parseInt(s.match(/\d+/)[0]);
+        return n(a) - n(b);
+      });
+
+    if (!slideFiles.length) throw new Error('No slides found in this PPTX file.');
+
+    const parser = new DOMParser();
+    const parts  = [];
+    for (const name of slideFiles) {
+      const xml  = await zip.files[name].async('string');
+      const doc  = parser.parseFromString(xml, 'application/xml');
+      // <a:t> elements hold the actual text runs in DrawingML
+      const nodes = doc.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 't');
+      for (const node of nodes) {
+        const t = node.textContent.trim();
+        if (t) parts.push(t);
+      }
+    }
+    return tokenise(parts.join(' '));
+  }
+
+  // ── TXT extraction ────────────────────────────────────────────────────────
+  async function extractFromTxt(file) {
+    const text = await file.text();
+    return tokenise(text);
+  }
+
+  // ── File dispatcher ───────────────────────────────────────────────────────
+  function fileType(file) {
+    const name = file.name.toLowerCase();
+    if (name.endsWith('.pdf'))  return 'pdf';
+    if (name.endsWith('.pptx')) return 'pptx';
+    if (name.endsWith('.txt'))  return 'txt';
+    return null;
+  }
+
+  async function handleFile(file) {
+    const type = fileType(file);
+    if (!type) {
+      alert('Unsupported file type. Please upload a PDF, PPTX, or TXT file.');
+      return;
+    }
+
+    // Stop any current playback
+    stop();
+
+    // Show loading
+    dropZone.style.display = 'none';
+    fileInfo.style.display = 'none';
+    loading.style.display  = 'flex';
+
+    try {
+      let extracted;
+      if (type === 'pdf') {
+        extracted = await extractFromPdf(await file.arrayBuffer());
+      } else if (type === 'pptx') {
+        extracted = await extractFromPptx(await file.arrayBuffer());
+      } else {
+        extracted = await extractFromTxt(file);
+      }
+
+      if (!extracted.length) {
+        const hint = type === 'pdf' ? ' It may be a scanned image PDF.' : '';
+        throw new Error('No text found in this file.' + hint);
+      }
+
+      words        = extracted;
+      currentIndex = 0;
+
+      // Update UI
+      fileNameEl.textContent  = file.name;
+      wordCountEl.textContent = words.length.toLocaleString() + ' words';
+      fileInfo.style.display  = 'flex';
+
+      placeholder.style.display = 'none';
+      wordDisplay.style.display = 'flex';
+      renderWord(words[0]);
+      resetProgress();
+
+      btnPlay.disabled    = false;
+      btnPlay.textContent = '▶ Start';
+      btnPlay.classList.remove('playing');
+
+    } catch (err) {
+      alert('Error reading file: ' + err.message);
+      dropZone.style.display = 'flex';
+    } finally {
+      loading.style.display = 'none';
+    }
+  }
+
+  // ── Drop zone interactions ─────────────────────────────────────────────────
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') fileInput.click();
+  });
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) handleFile(fileInput.files[0]);
+    fileInput.value = ''; // reset so same file can be re-uploaded
+  });
+
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+
+  dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('drag-over');
+  });
+
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file) handleFile(file);
+  });
+
+  // Allow clicking file-name area to load a new file
+  fileInfo.addEventListener('click', () => fileInput.click());
+  fileInfo.style.cursor = 'pointer';
+  fileInfo.title = 'Click to load a different file';
+
+})();
+</script>
+</body>
+</html>
