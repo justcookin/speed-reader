@@ -157,14 +157,14 @@
       const span = guideTextEl.querySelector(`[data-i="${i}"]`);
       if (span) span.classList.add('active-chunk');
     }
-    // Auto-scroll: center the highlighted region in #reader
+    // Paging: only snap when the chunk moves past the bottom of the visible area
     const firstSpan = guideTextEl.querySelector(`[data-i="${startIndex}"]`);
-    if (firstSpan) {
-      const readerRect = readerEl.getBoundingClientRect();
-      const spanRect   = firstSpan.getBoundingClientRect();
-      // Delta between span's current center and reader's center → adjust scrollTop
-      readerEl.scrollTop +=
-        (spanRect.top + spanRect.height / 2) - (readerRect.top + readerRect.height / 2);
+    if (!firstSpan) return;
+    const spanBottom = firstSpan.offsetTop + firstSpan.offsetHeight;
+    const viewBottom = readerEl.scrollTop + readerEl.clientHeight;
+    if (spanBottom > viewBottom) {
+      // Snap the new chunk to the top of the visible area
+      readerEl.scrollTop = firstSpan.offsetTop - 20;
     }
   }
 
