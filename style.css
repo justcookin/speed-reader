@@ -366,13 +366,47 @@ kbd {
 }
 
 #guide-text span {
-  transition: color 0.08s, background 0.08s;
+  transition: color 0.15s ease-out, background 0.15s ease-out, text-shadow 0.15s ease-out;
+  text-shadow: 0 0 0 rgba(88, 166, 255, 0); /* from-state for smooth glow transition */
 }
 
 #guide-text span.active-chunk {
   color: var(--text);
   background: rgba(88, 166, 255, 0.18);
   border-radius: 2px;
+  text-shadow: 0 0 12px rgba(88, 166, 255, 0.45);
+}
+
+/* Block-level formatting within guide text */
+.guide-para {
+  margin: 0 0 0.75em;
+}
+
+.guide-heading {
+  font-size: 1.1em;
+  font-weight: 600;
+  margin: 0.6em 0 0.35em;
+}
+
+.guide-heading:first-child,
+.guide-para:first-child {
+  margin-top: 0;
+}
+
+.guide-bullet {
+  display: flex;
+  gap: 0.4em;
+  margin: 0.15em 0;
+}
+
+.bullet-marker {
+  color: var(--accent);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.bullet-body {
+  flex: 1;
 }
 
 /* ── Reader in guide mode ────────────────────────────────────────────────── */

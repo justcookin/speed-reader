@@ -87,7 +87,8 @@
   'use strict';
 
   // ── State ────────────────────────────────────────────────────────────────
-  let words        = [];
+  let words        = [];   // flat word list (drives RSVP + word count)
+  let blocks       = [];   // structured blocks {type, words, startIndex} (drives Guide)
   let currentIndex = 0;
   let wpm          = 300;
   let intervalId   = null;
@@ -130,7 +131,6 @@
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
   // ── ORP calculation ───────────────────────────────────────────────────────
-  // Pivot = ceil(length / 2) - 1 (0-based index)
   function orpIndex(word) {
     return Math.ceil(word.length / 2) - 1;
   }
@@ -145,9 +145,20 @@
 
   // ── Guide text rendering ──────────────────────────────────────────────────
   function renderGuideText() {
-    guideTextEl.innerHTML = words
-      .map((w, i) => `<span data-i="${i}">${w} </span>`)
-      .join('');
+    guideTextEl.innerHTML = blocks.map(block => {
+      if (!block.words.length) return '';
+      const inner = block.words
+        .map((w, j) => `<span data-i="${block.startIndex + j}">${w} </span>`)
+        .join('');
+      switch (block.type) {
+        case 'heading':
+          return `<div class="guide-heading">${inner}</div>`;
+        case 'bullet':
+          return `<div class="guide-bullet"><span class="bullet-marker" aria-hidden="true">•</span><span class="bullet-body">${inner}</span></div>`;
+        default:
+          return `<p class="guide-para">${inner}</p>`;
+      }
+    }).join('');
   }
 
   function highlightChunk(startIndex) {
@@ -163,7 +174,6 @@
     const spanBottom = firstSpan.offsetTop + firstSpan.offsetHeight;
     const viewBottom = readerEl.scrollTop + readerEl.clientHeight;
     if (spanBottom > viewBottom) {
-      // Snap the new chunk to the top of the visible area
       readerEl.scrollTop = firstSpan.offsetTop - 20;
     }
   }
@@ -294,27 +304,106 @@
     }
   });
 
-  // ── Text tokeniser (shared) ───────────────────────────────────────────────
+  // ── Text tokeniser ────────────────────────────────────────────────────────
   function tokenise(text) {
     return text.split(/\s+/).filter(w => w.length > 0);
   }
 
+  // ── Block helpers ─────────────────────────────────────────────────────────
+  // Given a raw array of {type, text} blocks, assign sequential word indices
+  // and return the flat words array.
+  function processBlocks(rawBlocks) {
+    const flat = [];
+    for (const block of rawBlocks) {
+      block.startIndex = flat.length;
+      block.words = tokenise(block.text);
+      flat.push(...block.words);
+    }
+    return flat;
+  }
+
   // ── PDF extraction ────────────────────────────────────────────────────────
+  // Groups PDF text items into visual lines, then into paragraph/heading/bullet
+  // blocks using gap size and font-size heuristics.
+  function pdfItemsToBlocks(items) {
+    const BULLET_RE = /^[\u2022\u2023\u25E6\u25AA\u25CF\u25CB\u2043•·▪▸◦]\s*|^[-*]\s+/;
+    const nonEmpty  = items.filter(item => item.str.trim());
+    if (!nonEmpty.length) return [];
+
+    // Group items into lines using y-coordinate proximity (±2 units)
+    const lines = [];
+    for (const item of nonEmpty) {
+      const y  = item.transform[5];
+      const fs = item.height || Math.abs(item.transform[3]) || 0;
+      const x  = item.transform[4];
+      const existing = lines.find(l => Math.abs(l.y - y) <= 2);
+      if (existing) {
+        existing.text += item.str;
+        if (fs > existing.maxFS) existing.maxFS = fs;
+        if (x  < existing.minX)  existing.minX  = x;
+      } else {
+        lines.push({ y, text: item.str, maxFS: fs, minX: x });
+      }
+    }
+
+    // Sort top-to-bottom (PDF y=0 is bottom, so descending y = reading order)
+    lines.sort((a, b) => b.y - a.y);
+    const cleanLines = lines.map(l => ({ ...l, text: l.text.trim() })).filter(l => l.text);
+    if (!cleanLines.length) return [];
+
+    // Compute median line gap → paragraph break threshold
+    const gaps = [];
+    for (let i = 1; i < cleanLines.length; i++) {
+      const g = cleanLines[i - 1].y - cleanLines[i].y;
+      if (g > 0) gaps.push(g);
+    }
+    gaps.sort((a, b) => a - b);
+    const medianGap     = gaps[Math.floor(gaps.length / 2)] || 12;
+    const paraThreshold = medianGap * 1.8;
+
+    // Compute median font size → heading detection threshold
+    const fontSizes = cleanLines.map(l => l.maxFS).filter(f => f > 0).sort((a, b) => a - b);
+    const medianFS  = fontSizes[Math.floor(fontSizes.length / 2)] || 12;
+
+    // Build blocks
+    const rawBlocks = [];
+    let cur = null;
+    for (let i = 0; i < cleanLines.length; i++) {
+      const line        = cleanLines[i];
+      const gap         = i > 0 ? cleanLines[i - 1].y - line.y : 0;
+      const isNewBlock  = !cur || gap > paraThreshold;
+      const isHeading   = line.maxFS > medianFS * 1.2;
+      const bulletMatch = line.text.match(BULLET_RE);
+      const isBullet    = !!bulletMatch;
+      const text        = isBullet ? line.text.slice(bulletMatch[0].length).trim() : line.text;
+      const type        = isHeading ? 'heading' : isBullet ? 'bullet' : 'paragraph';
+
+      if (isNewBlock || isHeading || isBullet) {
+        cur = { type, text };
+        rawBlocks.push(cur);
+      } else {
+        cur.text += ' ' + text;
+      }
+    }
+
+    return rawBlocks.filter(b => b.text.trim());
+  }
+
   async function extractFromPdf(arrayBuffer) {
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    const parts = [];
+    const pdf   = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    const rawBlocks = [];
     for (let i = 1; i <= pdf.numPages; i++) {
       const page    = await pdf.getPage(i);
       const content = await page.getTextContent();
-      parts.push(content.items.map(item => item.str).join(' '));
+      rawBlocks.push(...pdfItemsToBlocks(content.items));
     }
-    return tokenise(parts.join(' '));
+    return rawBlocks;
   }
 
   // ── PPTX extraction ───────────────────────────────────────────────────────
+  // Title placeholder shapes → heading blocks; body shapes → paragraph blocks.
   async function extractFromPptx(arrayBuffer) {
     const zip = await JSZip.loadAsync(arrayBuffer);
-    // Slide files live at ppt/slides/slide1.xml, slide2.xml, …
     const slideFiles = Object.keys(zip.files)
       .filter(name => /^ppt\/slides\/slide\d+\.xml$/.test(name))
       .sort((a, b) => {
@@ -324,25 +413,64 @@
 
     if (!slideFiles.length) throw new Error('No slides found in this PPTX file.');
 
-    const parser = new DOMParser();
-    const parts  = [];
+    const parser  = new DOMParser();
+    const DML     = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+    const PML     = 'http://schemas.openxmlformats.org/presentationml/2006/main';
+    const rawBlocks = [];
+
     for (const name of slideFiles) {
       const xml  = await zip.files[name].async('string');
       const doc  = parser.parseFromString(xml, 'application/xml');
-      // <a:t> elements hold the actual text runs in DrawingML
-      const nodes = doc.getElementsByTagNameNS('http://schemas.openxmlformats.org/drawingml/2006/main', 't');
-      for (const node of nodes) {
-        const t = node.textContent.trim();
-        if (t) parts.push(t);
+      const shapes = doc.getElementsByTagNameNS(PML, 'sp');
+
+      for (const sp of shapes) {
+        const ph     = sp.getElementsByTagNameNS(PML, 'ph')[0];
+        const phType = ph ? ph.getAttribute('type') : null;
+        const isTitle = phType === 'title' || phType === 'ctrTitle';
+
+        const tNodes = sp.getElementsByTagNameNS(DML, 't');
+        const text   = Array.from(tNodes)
+          .map(t => t.textContent.trim())
+          .filter(Boolean)
+          .join(' ');
+        if (text) rawBlocks.push({ type: isTitle ? 'heading' : 'paragraph', text });
       }
     }
-    return tokenise(parts.join(' '));
+
+    return rawBlocks;
   }
 
   // ── TXT extraction ────────────────────────────────────────────────────────
+  // Blank lines → paragraph breaks; lines starting with bullet chars → bullets.
+  function txtToBlocks(text) {
+    const BULLET_RE = /^[\u2022•·▪▸◦*-]\s+/;
+    const rawBlocks = [];
+
+    for (const para of text.split(/\n{2,}/)) {
+      const trimmed = para.trim();
+      if (!trimmed) continue;
+
+      const lines = trimmed.split('\n').map(l => l.trim()).filter(Boolean);
+
+      // If every line starts with a bullet marker, treat each as a bullet
+      if (lines.length > 1 && lines.every(l => BULLET_RE.test(l))) {
+        for (const line of lines) {
+          const m = line.match(BULLET_RE);
+          rawBlocks.push({ type: 'bullet', text: line.slice(m[0].length).trim() });
+        }
+      } else if (lines.length === 1 && BULLET_RE.test(lines[0])) {
+        const m = lines[0].match(BULLET_RE);
+        rawBlocks.push({ type: 'bullet', text: lines[0].slice(m[0].length).trim() });
+      } else {
+        rawBlocks.push({ type: 'paragraph', text: lines.join(' ') });
+      }
+    }
+
+    return rawBlocks.length ? rawBlocks : [{ type: 'paragraph', text: text.trim() }];
+  }
+
   async function extractFromTxt(file) {
-    const text = await file.text();
-    return tokenise(text);
+    return txtToBlocks(await file.text());
   }
 
   // ── File dispatcher ───────────────────────────────────────────────────────
@@ -361,38 +489,38 @@
       return;
     }
 
-    // Stop any current playback
     stop();
-
-    // Show loading
     dropZone.style.display = 'none';
     fileInfo.style.display = 'none';
     loading.style.display  = 'flex';
 
     try {
-      let extracted;
+      let rawBlocks;
       if (type === 'pdf') {
-        extracted = await extractFromPdf(await file.arrayBuffer());
+        rawBlocks = await extractFromPdf(await file.arrayBuffer());
       } else if (type === 'pptx') {
-        extracted = await extractFromPptx(await file.arrayBuffer());
+        rawBlocks = await extractFromPptx(await file.arrayBuffer());
       } else {
-        extracted = await extractFromTxt(file);
+        rawBlocks = await extractFromTxt(file);
       }
 
-      if (!extracted.length) {
+      if (!rawBlocks.length) {
         const hint = type === 'pdf' ? ' It may be a scanned image PDF.' : '';
         throw new Error('No text found in this file.' + hint);
       }
 
-      words        = extracted;
+      blocks       = rawBlocks;
+      words        = processBlocks(blocks);   // assigns startIndex + .words on each block
       currentIndex = 0;
 
-      // Update UI
+      if (!words.length) {
+        throw new Error('No readable words found in this file.');
+      }
+
       fileNameEl.textContent  = file.name;
       wordCountEl.textContent = words.length.toLocaleString() + ' words';
       fileInfo.style.display  = 'flex';
 
-      // Always pre-render guide text spans
       renderGuideText();
 
       placeholder.style.display = 'none';
@@ -403,6 +531,7 @@
       } else {
         wordDisplay.style.display = 'none';
         guideTextEl.style.display = 'block';
+        readerEl.scrollTop = 0;
         highlightChunk(0);
       }
       resetProgress();
@@ -429,7 +558,7 @@
 
   fileInput.addEventListener('change', () => {
     if (fileInput.files[0]) handleFile(fileInput.files[0]);
-    fileInput.value = ''; // reset so same file can be re-uploaded
+    fileInput.value = '';
   });
 
   dropZone.addEventListener('dragover', (e) => {
@@ -448,7 +577,6 @@
     if (file) handleFile(file);
   });
 
-  // Allow clicking file-name area to load a new file
   fileInfo.addEventListener('click', () => fileInput.click());
   fileInfo.style.cursor = 'pointer';
   fileInfo.title = 'Click to load a different file';
