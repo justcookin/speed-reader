@@ -321,3 +321,89 @@ kbd {
   font-size: 0.75rem;
   background: var(--surface2);
 }
+
+/* ── Mode toggle ─────────────────────────────────────────────────────────── */
+#mode-toggle {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+}
+
+.mode-btn {
+  background: var(--btn-bg);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 6px 20px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.mode-btn:hover:not(:disabled) {
+  background: var(--btn-hover);
+  border-color: #58a6ff55;
+  color: var(--text);
+}
+
+.mode-btn.active {
+  background: var(--btn-active);
+  color: #fff;
+  border-color: var(--btn-active);
+}
+
+/* ── Guide text container ────────────────────────────────────────────────── */
+#guide-text {
+  display: none;
+  padding: 20px 24px;
+  font-size: 1.05rem;
+  line-height: 1.75;
+  color: var(--text-muted);
+  text-align: left;
+  overflow: hidden;
+  pointer-events: none;
+  width: 100%;
+}
+
+#guide-text span {
+  transition: color 0.08s, background 0.08s;
+}
+
+#guide-text span.active-chunk {
+  color: var(--text);
+  background: rgba(88, 166, 255, 0.18);
+  border-radius: 2px;
+}
+
+/* ── Reader in guide mode ────────────────────────────────────────────────── */
+#reader.guide-mode {
+  height: 280px;
+  overflow-y: scroll;
+  scrollbar-width: none;        /* Firefox */
+  justify-content: flex-start;
+  align-items: flex-start;
+}
+
+#reader.guide-mode::-webkit-scrollbar {
+  display: none;                /* Chrome, Safari, Edge */
+}
+
+#reader.guide-mode::before {
+  display: none;                /* hide ORP center line */
+}
+
+/* ── Chunk controls ──────────────────────────────────────────────────────── */
+#chunk-controls {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+#chunk-display {
+  min-width: 60px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}

@@ -36,12 +36,19 @@
     <span id="word-count"></span>
   </div>
 
+  <!-- Mode toggle -->
+  <div id="mode-toggle">
+    <button id="btn-rsvp" class="mode-btn active" disabled>RSVP</button>
+    <button id="btn-guide" class="mode-btn" disabled>Guide</button>
+  </div>
+
   <!-- Reader display -->
   <div id="reader" aria-live="off">
     <span id="reader-placeholder">Upload a file to begin</span>
     <div id="word-display" aria-label="current word" style="display:none;">
       <span id="word-prefix"></span><span id="word-orp"></span><span id="word-suffix"></span>
     </div>
+    <div id="guide-text"></div>
   </div>
 
   <!-- Controls -->
@@ -50,6 +57,13 @@
     <button id="btn-play" disabled>▶ Start</button>
     <button id="btn-faster" title="Increase speed (+10 WPM)">+10 ▶</button>
     <span id="wpm-display">300 WPM</span>
+  </div>
+
+  <!-- Chunk controls (Guide mode only) -->
+  <div id="chunk-controls">
+    <button id="btn-chunk-less">− Chunk</button>
+    <span id="chunk-display">3 words</span>
+    <button id="btn-chunk-more">+ Chunk</button>
   </div>
 
   <!-- Progress -->
@@ -77,8 +91,12 @@
   let currentIndex = 0;
   let wpm          = 300;
   let intervalId   = null;
+  let mode         = 'rsvp';  // 'rsvp' | 'guide'
+  let chunkSize    = 3;
   const MIN_WPM    = 60;
   const MAX_WPM    = 1000;
+  const MIN_CHUNK  = 1;
+  const MAX_CHUNK  = 10;
 
   // ── DOM refs ─────────────────────────────────────────────────────────────
   const dropZone      = document.getElementById('drop-zone');
@@ -87,18 +105,25 @@
   const fileInfo      = document.getElementById('file-info');
   const fileNameEl    = document.getElementById('file-name');
   const wordCountEl   = document.getElementById('word-count');
-  const reader        = document.getElementById('reader');
+  const readerEl      = document.getElementById('reader');
   const placeholder   = document.getElementById('reader-placeholder');
   const wordDisplay   = document.getElementById('word-display');
   const wordPrefix    = document.getElementById('word-prefix');
   const wordOrp       = document.getElementById('word-orp');
   const wordSuffix    = document.getElementById('word-suffix');
+  const guideTextEl   = document.getElementById('guide-text');
   const btnPlay       = document.getElementById('btn-play');
   const btnSlower     = document.getElementById('btn-slower');
   const btnFaster     = document.getElementById('btn-faster');
   const wpmDisplay    = document.getElementById('wpm-display');
   const progressFill  = document.getElementById('progress-bar-fill');
   const progressLabel = document.getElementById('progress-label');
+  const btnRsvp       = document.getElementById('btn-rsvp');
+  const btnGuide      = document.getElementById('btn-guide');
+  const chunkControls = document.getElementById('chunk-controls');
+  const chunkDisplay  = document.getElementById('chunk-display');
+  const btnChunkLess  = document.getElementById('btn-chunk-less');
+  const btnChunkMore  = document.getElementById('btn-chunk-more');
 
   // ── PDF.js setup ─────────────────────────────────────────────────────────
   pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -118,24 +143,60 @@
     wordSuffix.textContent = word.slice(pivot + 1);
   }
 
-  // ── RSVP loop ─────────────────────────────────────────────────────────────
+  // ── Guide text rendering ──────────────────────────────────────────────────
+  function renderGuideText() {
+    guideTextEl.innerHTML = words
+      .map((w, i) => `<span data-i="${i}">${w} </span>`)
+      .join('');
+  }
+
+  function highlightChunk(startIndex) {
+    guideTextEl.querySelectorAll('.active-chunk')
+      .forEach(el => el.classList.remove('active-chunk'));
+    for (let i = startIndex; i < Math.min(startIndex + chunkSize, words.length); i++) {
+      const span = guideTextEl.querySelector(`[data-i="${i}"]`);
+      if (span) span.classList.add('active-chunk');
+    }
+    // Auto-scroll: center the highlighted region in #reader
+    const firstSpan = guideTextEl.querySelector(`[data-i="${startIndex}"]`);
+    if (firstSpan) {
+      const readerRect = readerEl.getBoundingClientRect();
+      const spanRect   = firstSpan.getBoundingClientRect();
+      // Delta between span's current center and reader's center → adjust scrollTop
+      readerEl.scrollTop +=
+        (spanRect.top + spanRect.height / 2) - (readerRect.top + readerRect.height / 2);
+    }
+  }
+
+  // ── Interval timing ───────────────────────────────────────────────────────
+  function intervalMs() {
+    return mode === 'rsvp'
+      ? 60000 / wpm
+      : (chunkSize * 60000) / wpm;
+  }
+
+  // ── Tick ──────────────────────────────────────────────────────────────────
   function tick() {
     if (currentIndex >= words.length) {
       stop();
       return;
     }
-    renderWord(words[currentIndex]);
+    if (mode === 'rsvp') {
+      renderWord(words[currentIndex]);
+      currentIndex++;
+    } else {
+      highlightChunk(currentIndex);
+      currentIndex += chunkSize;
+    }
     updateProgress();
-    currentIndex++;
   }
 
   function start() {
     if (!words.length) return;
     if (currentIndex >= words.length) {
-      // Restart from beginning if we're at the end
       currentIndex = 0;
     }
-    intervalId = setInterval(tick, 60000 / wpm);
+    intervalId = setInterval(tick, intervalMs());
     btnPlay.textContent = '⏸ Pause';
     btnPlay.classList.add('playing');
   }
@@ -145,7 +206,6 @@
     intervalId = null;
     btnPlay.textContent = '▶ Resume';
     btnPlay.classList.remove('playing');
-    // If we hit the end, show "Start over" label
     if (currentIndex >= words.length) {
       btnPlay.textContent = '↺ Restart';
     }
@@ -177,15 +237,51 @@
   function setWpm(newWpm) {
     wpm = Math.min(MAX_WPM, Math.max(MIN_WPM, newWpm));
     wpmDisplay.textContent = wpm + ' WPM';
-    // If currently playing, restart the interval at the new speed
     if (intervalId) {
       clearInterval(intervalId);
-      intervalId = setInterval(tick, 60000 / wpm);
+      intervalId = setInterval(tick, intervalMs());
     }
   }
 
   btnSlower.addEventListener('click', () => setWpm(wpm - 10));
   btnFaster.addEventListener('click', () => setWpm(wpm + 10));
+
+  // ── Chunk controls ────────────────────────────────────────────────────────
+  function setChunkSize(n) {
+    chunkSize = Math.min(MAX_CHUNK, Math.max(MIN_CHUNK, n));
+    chunkDisplay.textContent = chunkSize + ' word' + (chunkSize === 1 ? '' : 's');
+    if (intervalId) {
+      clearInterval(intervalId);
+      intervalId = setInterval(tick, intervalMs());
+    }
+  }
+
+  btnChunkLess.addEventListener('click', () => setChunkSize(chunkSize - 1));
+  btnChunkMore.addEventListener('click', () => setChunkSize(chunkSize + 1));
+
+  // ── Mode switching ────────────────────────────────────────────────────────
+  function switchMode(newMode) {
+    if (newMode === mode) return;
+    stop();
+    mode = newMode;
+    btnRsvp.classList.toggle('active', mode === 'rsvp');
+    btnGuide.classList.toggle('active', mode === 'guide');
+    wordDisplay.style.display   = mode === 'rsvp'  ? 'flex'  : 'none';
+    guideTextEl.style.display   = mode === 'guide' ? 'block' : 'none';
+    chunkControls.style.display = mode === 'guide' ? 'flex'  : 'none';
+    readerEl.classList.toggle('guide-mode', mode === 'guide');
+    if (words.length) {
+      currentIndex = 0;
+      resetProgress();
+      if (mode === 'guide') highlightChunk(0);
+      else renderWord(words[0]);
+      btnPlay.textContent = '▶ Start';
+      btnPlay.classList.remove('playing');
+    }
+  }
+
+  btnRsvp.addEventListener('click', () => switchMode('rsvp'));
+  btnGuide.addEventListener('click', () => switchMode('guide'));
 
   // ── Play button ───────────────────────────────────────────────────────────
   btnPlay.addEventListener('click', togglePlay);
@@ -296,14 +392,26 @@
       wordCountEl.textContent = words.length.toLocaleString() + ' words';
       fileInfo.style.display  = 'flex';
 
+      // Always pre-render guide text spans
+      renderGuideText();
+
       placeholder.style.display = 'none';
-      wordDisplay.style.display = 'flex';
-      renderWord(words[0]);
+      if (mode === 'rsvp') {
+        wordDisplay.style.display = 'flex';
+        guideTextEl.style.display = 'none';
+        renderWord(words[0]);
+      } else {
+        wordDisplay.style.display = 'none';
+        guideTextEl.style.display = 'block';
+        highlightChunk(0);
+      }
       resetProgress();
 
       btnPlay.disabled    = false;
       btnPlay.textContent = '▶ Start';
       btnPlay.classList.remove('playing');
+      btnRsvp.disabled = false;
+      btnGuide.disabled = false;
 
     } catch (err) {
       alert('Error reading file: ' + err.message);
