@@ -138,22 +138,32 @@
   }
 
   // Render a chunk of rsvpChunk words starting at startIdx.
-  // ORP is applied to the middle (pivot) word; all other words fill prefix/suffix.
+  // One ORP character is highlighted — the pivot letter of the centre word.
+  // All other characters (including inter-word spaces) are plain text in the
+  // prefix and suffix spans, guaranteeing real spaces between words.
   function renderChunk(startIdx) {
     const chunk = words.slice(startIdx, Math.min(startIdx + rsvpChunk, words.length));
     if (!chunk.length) return;
 
-    const pivotIdx  = Math.floor((chunk.length - 1) / 2);
+    // If a previous innerHTML call detached the fixed spans, re-attach them
+    if (!wordPrefix.isConnected) {
+      wordDisplay.textContent = '';
+      wordDisplay.append(wordPrefix, wordOrp, wordSuffix);
+    }
+
+    // Centre word carries the single ORP character
+    const pivotIdx  = Math.floor(chunk.length / 2);
     const pivotWord = chunk[pivotIdx];
     const pivot     = orpIndex(pivotWord);
     const before    = chunk.slice(0, pivotIdx).join(' ');
     const after     = chunk.slice(pivotIdx + 1).join(' ');
 
+    // Spaces are embedded as text content — no HTML needed, no collapsing
     wordPrefix.textContent = (before ? before + ' ' : '') + pivotWord.slice(0, pivot);
     wordOrp.textContent    = pivotWord[pivot];
     wordSuffix.textContent = pivotWord.slice(pivot + 1) + (after ? ' ' + after : '');
 
-    // Scale font size down for larger chunks so text fits the reader
+    // Scale font size down for larger chunks so text fits the reader box
     wordDisplay.style.fontSize =
       rsvpChunk <= 2 ? '2.6rem' : rsvpChunk <= 4 ? '1.9rem' : '1.4rem';
   }

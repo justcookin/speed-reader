@@ -159,23 +159,12 @@ main {
   line-height: 1;
   position: relative;
   z-index: 1;
+  max-width: 100%;
+  padding: 0 16px;
 }
 
-/* Three segments: prefix, ORP letter, suffix */
-#word-prefix {
-  text-align: right;
-  color: var(--text);
-}
-
-#word-orp {
-  color: var(--orp);
-  font-weight: 700;
-}
-
-#word-suffix {
-  text-align: left;
-  color: var(--text);
-}
+#word-prefix, #word-suffix { color: var(--text); }
+#word-orp { color: var(--orp); font-weight: 700; }
 
 #reader-placeholder {
   color: var(--text-muted);
