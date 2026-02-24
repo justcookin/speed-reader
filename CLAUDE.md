@@ -1,9 +1,21 @@
 # Speed Reader — Claude Code Session Notes
 
+## Session History
+
+### February 2026 — Initial build
+Built from scratch in one session. Started with RSVP-only, then added Guide mode, structured PDF
+extraction, multi-word RSVP chunking, and highlight transition polish.
+
+---
+
 ## What This App Is
 
 A browser-based speed reader (`index.html` + `style.css`, no build step, no dependencies except CDN scripts).
 Supports PDF, PPTX, and TXT files. Two reading modes: **RSVP** and **Guide**.
+
+Intentionally a proof of concept — no framework, no build pipeline, no backend. The goal was to
+replicate the core mechanics of apps like Spreeder and Outread to understand where their value
+actually lies.
 
 ---
 
@@ -211,3 +223,58 @@ the right variable (`rsvpChunk` vs `chunkSize`) and recalculates the interval if
 | `.join(' ')` spaces collapse in flex containers | Use `textContent` with spaces embedded in strings |
 | RSVP multi-word pivot on wrong word | `Math.floor(chunk.length / 2)` gives true centre for all sizes |
 | PDF y=0 is page bottom | Sort lines descending by y for reading order |
+
+---
+
+## Product & Competitive Learnings
+
+### What this proves
+The core reading mechanics of commercial speed readers — RSVP with ORP, Guide mode with pacing,
+structured text extraction — fit in ~600 lines of vanilla JS. The engine itself is essentially
+a commodity. This was built in a single session to near feature-parity with the core reader in
+apps that charge subscription fees.
+
+### Where Spreeder / Outread / Readwise Reader actually earn their keep
+These are the hard parts this proof of concept does NOT have:
+
+- **Library & sync** — iCloud/Pocket/Instapaper/Readwise integration, reading position persisted
+  across devices. Genuinely hard infrastructure.
+- **Mobile native feel** — gesture controls, background fetch, offline support, haptics. A web
+  app can approximate but not match native.
+- **Persistence** — position remembered per book, per-document WPM settings, reading history,
+  streak tracking, stats.
+- **Content pipelines** — web article stripping (Readability.js), ePub/MOBI parsing, cleaning
+  PDF extraction artifacts far beyond our heuristic approach, handling poorly-structured documents.
+- **Training & habit products** — Spreeder in particular sells structured speed reading courses,
+  not just the tool. The reader is the delivery mechanism.
+- **Polish at scale** — edge cases in real-world PDFs (multi-column, tables, footnotes mixed into
+  body, right-to-left text, ligatures) that our heuristic extractor mangles.
+
+### The honest limitation of this build
+Our PDF extraction will fail or produce garbled output on:
+- Multi-column layouts (columns get interleaved)
+- Tables (cells merge into nonsense)
+- Footnotes (mixed into paragraph text)
+- Heavily styled documents where `item.height` doesn't reflect actual font size
+
+Production apps spend enormous effort on these edge cases. That gap is larger than it looks from
+the outside.
+
+### The moat is thin — but real
+The reading engine is replicable in a weekend. The defensible value is the ecosystem: sync,
+library management, content sourcing, and habit-formation product design built up over years.
+Same pattern as most SaaS tools when you strip out the core feature.
+
+---
+
+## Potential Next Features (if continuing this project)
+
+- **Persistence** — `localStorage` for WPM, chunk size, last file position
+- **ePub support** — JSZip already in the stack; ePub is just a zip of HTML files
+- **Web article mode** — paste a URL, strip with Readability.js, read immediately
+- **Reading stats** — words read, time spent, WPM history chart
+- **Progress memory** — remember position per file (hash the filename as key)
+- **Keyboard shortcuts** — arrow keys for WPM, number keys for chunk size
+- **Better PDF extraction** — column detection via x-coordinate clustering, footnote suppression
+  by ignoring lines with significantly smaller font size than median
+- **Mobile layout** — the current UI is desktop-only

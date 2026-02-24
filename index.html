@@ -93,13 +93,11 @@
   let wpm          = 300;
   let intervalId   = null;
   let mode         = 'rsvp';  // 'rsvp' | 'guide'
-  let rsvpChunk    = 1;   // words shown per tick in RSVP mode
-  let chunkSize    = 3;   // words highlighted per tick in Guide mode
-  const MIN_WPM       = 60;
-  const MAX_WPM       = 1000;
-  const MIN_CHUNK     = 1;
-  const MAX_RSVP_CHUNK = 7;
-  const MAX_CHUNK     = 10;
+  let chunkSize    = 3;
+  const MIN_WPM    = 60;
+  const MAX_WPM    = 1000;
+  const MIN_CHUNK  = 1;
+  const MAX_CHUNK  = 10;
 
   // ── DOM refs ─────────────────────────────────────────────────────────────
   const dropZone      = document.getElementById('drop-zone');
@@ -126,7 +124,7 @@
   const chunkControls = document.getElementById('chunk-controls');
   const chunkDisplay  = document.getElementById('chunk-display');
   const btnChunkLess  = document.getElementById('btn-chunk-less');
-  const btnChunkMore  = document.getElementById('btn-chunk-more');
+  const btnChunkMore  = document.getElementById('btn-chunk-more'); // testing <D-s>
 
   // ── PDF.js setup ─────────────────────────────────────────────────────────
   pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -137,35 +135,12 @@
     return Math.ceil(word.length / 2) - 1;
   }
 
-  // Render a chunk of rsvpChunk words starting at startIdx.
-  // One ORP character is highlighted — the pivot letter of the centre word.
-  // All other characters (including inter-word spaces) are plain text in the
-  // prefix and suffix spans, guaranteeing real spaces between words.
-  function renderChunk(startIdx) {
-    const chunk = words.slice(startIdx, Math.min(startIdx + rsvpChunk, words.length));
-    if (!chunk.length) return;
-
-    // If a previous innerHTML call detached the fixed spans, re-attach them
-    if (!wordPrefix.isConnected) {
-      wordDisplay.textContent = '';
-      wordDisplay.append(wordPrefix, wordOrp, wordSuffix);
-    }
-
-    // Centre word carries the single ORP character
-    const pivotIdx  = Math.floor(chunk.length / 2);
-    const pivotWord = chunk[pivotIdx];
-    const pivot     = orpIndex(pivotWord);
-    const before    = chunk.slice(0, pivotIdx).join(' ');
-    const after     = chunk.slice(pivotIdx + 1).join(' ');
-
-    // Spaces are embedded as text content — no HTML needed, no collapsing
-    wordPrefix.textContent = (before ? before + ' ' : '') + pivotWord.slice(0, pivot);
-    wordOrp.textContent    = pivotWord[pivot];
-    wordSuffix.textContent = pivotWord.slice(pivot + 1) + (after ? ' ' + after : '');
-
-    // Scale font size down for larger chunks so text fits the reader box
-    wordDisplay.style.fontSize =
-      rsvpChunk <= 2 ? '2.6rem' : rsvpChunk <= 4 ? '1.9rem' : '1.4rem';
+  function renderWord(word) {
+    if (!word) return;
+    const pivot = orpIndex(word);
+    wordPrefix.textContent = word.slice(0, pivot);
+    wordOrp.textContent    = word[pivot];
+    wordSuffix.textContent = word.slice(pivot + 1);
   }
 
   // ── Guide text rendering ──────────────────────────────────────────────────
@@ -205,8 +180,9 @@
 
   // ── Interval timing ───────────────────────────────────────────────────────
   function intervalMs() {
-    const c = mode === 'rsvp' ? rsvpChunk : chunkSize;
-    return (c * 60000) / wpm;
+    return mode === 'rsvp'
+      ? 60000 / wpm
+      : (chunkSize * 60000) / wpm;
   }
 
   // ── Tick ──────────────────────────────────────────────────────────────────
@@ -216,8 +192,8 @@
       return;
     }
     if (mode === 'rsvp') {
-      renderChunk(currentIndex);
-      currentIndex += rsvpChunk;
+      renderWord(words[currentIndex]);
+      currentIndex++;
     } else {
       highlightChunk(currentIndex);
       currentIndex += chunkSize;
@@ -281,26 +257,17 @@
   btnFaster.addEventListener('click', () => setWpm(wpm + 10));
 
   // ── Chunk controls ────────────────────────────────────────────────────────
-  function updateChunkDisplay() {
-    const c = mode === 'rsvp' ? rsvpChunk : chunkSize;
-    chunkDisplay.textContent = c + ' word' + (c === 1 ? '' : 's');
-  }
-
-  function setChunkSize(delta) {
-    if (mode === 'rsvp') {
-      rsvpChunk = Math.min(MAX_RSVP_CHUNK, Math.max(MIN_CHUNK, rsvpChunk + delta));
-    } else {
-      chunkSize = Math.min(MAX_CHUNK, Math.max(MIN_CHUNK, chunkSize + delta));
-    }
-    updateChunkDisplay();
+  function setChunkSize(n) {
+    chunkSize = Math.min(MAX_CHUNK, Math.max(MIN_CHUNK, n));
+    chunkDisplay.textContent = chunkSize + ' word' + (chunkSize === 1 ? '' : 's');
     if (intervalId) {
       clearInterval(intervalId);
       intervalId = setInterval(tick, intervalMs());
     }
   }
 
-  btnChunkLess.addEventListener('click', () => setChunkSize(-1));
-  btnChunkMore.addEventListener('click', () => setChunkSize(+1));
+  btnChunkLess.addEventListener('click', () => setChunkSize(chunkSize - 1));
+  btnChunkMore.addEventListener('click', () => setChunkSize(chunkSize + 1));
 
   // ── Mode switching ────────────────────────────────────────────────────────
   function switchMode(newMode) {
@@ -311,13 +278,13 @@
     btnGuide.classList.toggle('active', mode === 'guide');
     wordDisplay.style.display   = mode === 'rsvp'  ? 'flex'  : 'none';
     guideTextEl.style.display   = mode === 'guide' ? 'block' : 'none';
+    chunkControls.style.display = mode === 'guide' ? 'flex'  : 'none';
     readerEl.classList.toggle('guide-mode', mode === 'guide');
-    updateChunkDisplay();
     if (words.length) {
       currentIndex = 0;
       resetProgress();
       if (mode === 'guide') highlightChunk(0);
-      else renderChunk(0);
+      else renderWord(words[0]);
       btnPlay.textContent = '▶ Start';
       btnPlay.classList.remove('playing');
     }
@@ -557,12 +524,10 @@
       renderGuideText();
 
       placeholder.style.display = 'none';
-      chunkControls.style.display = 'flex';
-      updateChunkDisplay();
       if (mode === 'rsvp') {
         wordDisplay.style.display = 'flex';
         guideTextEl.style.display = 'none';
-        renderChunk(0);
+        renderWord(words[0]);
       } else {
         wordDisplay.style.display = 'none';
         guideTextEl.style.display = 'block';
